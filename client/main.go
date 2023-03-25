@@ -41,10 +41,17 @@ func help() {
 
 func main() {
 	flag.Parse()
-	fmt.Printf("name:%s\n", *name)
+	var ip string
+	fmt.Println("Which IP do you want to connect to?")
+	fmt.Scan(&ip)
+	var port string
+	fmt.Println("Which Port do you want to connect to?")
+	fmt.Scan(&port)
+	ip += ":"
+	ip += port
 
 	// Set up a connection to the server.
-	conn, err := grpc.Dial(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(ip, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}

@@ -64,8 +64,15 @@ func help() {
 func main() {
 	println("gRPC server tutorial in Go")
 	//fmt.Printf("len of rVote: %d\n", len(voting.RVoter))
-
-	listener, err := net.Listen("tcp", ":9000")
+	var ip string
+	fmt.Println("Which IP do you want to listen on?")
+	fmt.Scan(&ip)
+	var port string
+	fmt.Println("Which Port do you want to listen on?")
+	fmt.Scan(&port)
+	ip += ":"
+	ip += port
+	listener, err := net.Listen("tcp", ip)
 	if err != nil {
 		panic(err)
 	}

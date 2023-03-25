@@ -62,6 +62,12 @@ func (s *Server) CastVote(ctx context.Context, in *Vote) (*Status, error) {
 	election_name = *in.ElectionName
 	choice := *in.ChoiceName
 	findChoice := false
+	var co int32
+	if Equal(in.Token.Value, tokenByte) == false {
+		fmt.Println("token error")
+		co = -1
+		return &Status{Code: &co}, nil
+	}
 	for _, ele := range RElection {
 		if election_name == ele.Name {
 			for _, ch := range ele.Choices {
@@ -73,16 +79,14 @@ func (s *Server) CastVote(ctx context.Context, in *Vote) (*Status, error) {
 			}
 		}
 	}
-	var co int32
+
 	if findChoice == false {
 		fmt.Println("cant find choice")
 		co = -1
 	} else {
 		co = 0
 	}
-	if Equal(in.Token.Value, tokenByte) == false {
-		fmt.Println("token error")
-	}
+
 	fmt.Println(RElection)
 	return &Status{Code: &co}, nil
 
@@ -108,6 +112,12 @@ func (s *Server) CreateElection(ctx context.Context, in *Election) (*Status, err
 	now := time.Now()
 	if t1.Before(now) {
 		fmt.Println("time is expired!")
+		co = -1
+		return &Status{Code: &co}, nil
+	}
+
+	if Equal(in.Token.Value, tokenByte) == false {
+		fmt.Println("token error")
 		co = -1
 		return &Status{Code: &co}, nil
 	}
