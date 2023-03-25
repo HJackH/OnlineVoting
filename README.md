@@ -1,4 +1,5 @@
 # OnlineVoting
+This project can perform elections and votes on different workstations, as long as they can be connected through the network.
 This project should be executed in the linux environment. 
 Before executing the program, you need to install golang. 
 Then go to the server folder, execute the following command:
