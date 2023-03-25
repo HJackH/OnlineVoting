@@ -1,0 +1,74 @@
+syntax = "proto2";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "./voting";
+
+// The service definition.
+service Voting {
+    // Sends a greeting
+    rpc SayHello (HelloRequest) returns (HelloReply) {}
+    rpc RegisterVoter(Voter) returns (Status) {}
+    rpc CreateElection (Election) returns (Status) {}
+    rpc CastVote(Vote) returns (Status) {}
+    rpc GetResult(ElectionName) returns (ElectionResult) {}
+
+}
+
+message Vote {
+    required string election_name = 1;
+    required string choice_name = 2;
+    required AuthToken token = 3;
+}
+
+message ElectionName {
+    required string name = 1;
+}
+
+message ElectionResult {
+    required int32 status = 1;
+    repeated VoteCount counts = 2; 
+}
+
+message Voter {
+    required string name = 1;
+    required string group = 2;
+    required bytes public_key = 3;
+}
+
+message VoterName {
+    required string name = 1;
+}
+
+message Status {
+    required int32 code = 1;
+}
+   
+  
+// The request message containing the user's name.
+message HelloRequest {
+    required string name = 1;
+}
+  
+// The response message containing the greetings
+message HelloReply {
+    required string message = 1;
+}
+
+message Election {
+    required string name = 1;
+    repeated string groups = 2;
+    repeated string choices = 3;
+    required google.protobuf.Timestamp end_date = 4;
+    required AuthToken token = 5;
+}
+
+message AuthToken {
+    required bytes value = 1;
+}
+
+message VoteCount {
+    required string choice_name = 1;
+    required int32 count = 2;
+}
+   
+   
