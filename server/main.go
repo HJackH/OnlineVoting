@@ -2,17 +2,19 @@ package main
 
 import (
 	"OnlineVoting/voting"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"time"
 
+	"github.com/jamesruan/sodium"
 	"google.golang.org/grpc"
 )
 
 func registeredVoter() (int, error) {
-	var name, group string
+	var name, group, is_genkey string
 	var public_key []byte
 	fmt.Println("Perform register voter...")
 	fmt.Println("Please fill in the required information.")
@@ -20,8 +22,25 @@ func registeredVoter() (int, error) {
 	fmt.Scan(&name)
 	fmt.Print("voter's group:")
 	fmt.Scan(&group)
-	fmt.Printf("voter's public key:")
-	fmt.Scan(&public_key)
+	fmt.Print("generate key?(Y/N):")
+	fmt.Scan(&is_genkey)
+	if is_genkey == "Y" {
+		kp := sodium.MakeSignKP()
+		fmt.Println("public key(base64)= ", base64.StdEncoding.EncodeToString(kp.PublicKey.Bytes))
+		fmt.Println("secret key(base64) = ", base64.StdEncoding.EncodeToString(kp.SecretKey.Bytes))
+		// fmt.Println(kp.PublicKey.Bytes)
+		public_key = kp.PublicKey.Bytes
+	} else {
+		fmt.Printf("voter's public key:")
+		fmt.Scan(&public_key)
+	}
+
+	for _, vo := range voting.RVoter {
+		if vo.Name == name {
+			fmt.Println("Voter name already exists.")
+			return 1, nil
+		}
+	}
 
 	v := voting.RegisteredVoter{
 		Name:       name,

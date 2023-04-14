@@ -1,20 +1,28 @@
 package main
 
 import (
+	pb "OnlineVoting/voting"
 	"context"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"time"
 
-	"OnlineVoting/voting"
-	pb "OnlineVoting/voting"
-
+	"github.com/jamesruan/sodium"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
+
+type LocalVoter struct {
+	Name      *string
+	Group     *string
+	PublicKey []byte
+	SecretKey []byte
+	Token     *pb.AuthToken
+}
 
 const (
 	defaultName = "world"
@@ -25,6 +33,7 @@ var (
 	name      = flag.String("name", defaultName, "Name to greet")
 	group     = flag.String("group", "group0", "the group of voting")
 	tokenByte = []byte("GoodLuck")
+	voter     = LocalVoter{}
 )
 
 func GetIntPointerS(value string) *string {
@@ -32,7 +41,8 @@ func GetIntPointerS(value string) *string {
 }
 
 func help() {
-	fmt.Println("c : Create_Electio")
+	fmt.Println("r : Voter_Login")
+	fmt.Println("c : Create_Election")
 	fmt.Println("e : exit")
 	fmt.Println("f : finish task and break")
 	fmt.Println("v : Cast_Vote")
@@ -90,6 +100,8 @@ func main() {
 			Cast_Vote(ctx, c)
 		case "g":
 			Get_result(ctx, c)
+		case "r":
+			Voter_Login(ctx, c)
 		default:
 			fmt.Println("unknown task!")
 		}
@@ -112,7 +124,7 @@ func Cast_Vote(ctx context.Context, client pb.VotingClient) {
 	r, err := client.CastVote(ctx, &pb.Vote{
 		ElectionName: &election_name,
 		ChoiceName:   &choice_name,
-		Token:        &voting.AuthToken{Value: tokenByte},
+		Token:        voter.Token,
 	})
 	fmt.Println("result status:")
 	fmt.Println(r)
@@ -174,16 +186,61 @@ func Create_Election(ctx context.Context, client pb.VotingClient) {
 		choices = append(choices, temp)
 	}
 
-	_, err := client.CreateElection(ctx, &pb.Election{
+	r, err := client.CreateElection(ctx, &pb.Election{
 		Name:    &election_name,
 		EndDate: end_date,
-		Token:   &voting.AuthToken{Value: tokenByte},
+		Token:   voter.Token,
 		Groups:  groups,
 		Choices: choices,
 	})
+
+	fmt.Println(r)
 	if err != nil {
 		fmt.Println("create election error")
 		fmt.Println(err)
 	}
 
+}
+
+func Voter_Login(ctx context.Context, client pb.VotingClient) {
+
+	var name, group, publickey, secretkey string
+	// var public_key []byte
+	fmt.Println("Input voter info...")
+	// fmt.Println(voter)
+	fmt.Println("Please fill in the required information.")
+
+	fmt.Print("voter's name:")
+	fmt.Scan(&name)
+	fmt.Print("voter's group:")
+	fmt.Scan(&group)
+	fmt.Print("voter's public key(base64):")
+	fmt.Scan(&publickey)
+	fmt.Print("voter's secret key(base64):")
+	fmt.Scan(&secretkey)
+
+	b_publickey, _ := base64.StdEncoding.DecodeString(publickey)
+	b_secretkey, _ := base64.StdEncoding.DecodeString(secretkey)
+
+	fmt.Println("secret key: ", b_secretkey)
+
+	challenge, _ := client.PreAuth(ctx, &pb.VoterName{Name: &name})
+
+	fmt.Println("challenge: ", challenge)
+	sig := sodium.Bytes(challenge.GetValue()).SignDetached(sodium.SignSecretKey{sodium.Bytes(b_secretkey)})
+
+	token, _ := client.Auth(ctx, &pb.AuthRequest{
+		Name:     &pb.VoterName{Name: &name},
+		Response: &pb.Response{Value: sig.Bytes[:3]},
+	})
+
+	fmt.Println("token: ", token)
+
+	voter = LocalVoter{
+		Name:      &name,
+		Group:     &group,
+		PublicKey: b_publickey,
+		SecretKey: b_secretkey,
+		Token:     token,
+	}
 }

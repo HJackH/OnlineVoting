@@ -4,6 +4,9 @@ import (
 	context "context"
 	"fmt"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jamesruan/sodium"
 )
 
 var RVoter []RegisteredVoter
@@ -27,12 +30,13 @@ func (s *Server) SayHello(ctx context.Context, in *HelloRequest) (*HelloReply, e
 func (s *Server) GetResult(ctx context.Context, in *ElectionName) (*ElectionResult, error) {
 	election_name := *in.Name
 	var counts []*VoteCount
-	success := false
+	var co int32
+	co = 1
 	for _, ele := range RElection {
 		if election_name == ele.Name {
 			now := time.Now()
 			if ele.End_time.Before(now) {
-				success = true
+				co = 0
 				for _, ch := range ele.Choices {
 					fmt.Print("choice: ")
 					fmt.Println(ch)
@@ -44,14 +48,13 @@ func (s *Server) GetResult(ctx context.Context, in *ElectionName) (*ElectionResu
 				fmt.Println(counts)
 			} else {
 				fmt.Println("time is not up yet")
+				co = 2
 			}
 		}
 	}
-	var co int32
-	co = 0
-	if !success {
+
+	if co != 0 {
 		fmt.Println("GetResult error")
-		co = -1
 	}
 	return &ElectionResult{Status: &co, Counts: counts}, nil
 
@@ -63,13 +66,41 @@ func (s *Server) CastVote(ctx context.Context, in *Vote) (*Status, error) {
 	choice := *in.ChoiceName
 	findChoice := false
 	var co int32
-	if Equal(in.Token.Value, tokenByte) == false {
+	co = -1
+
+	now := time.Now()
+	var voter_group string
+	for _, vo := range RVoter {
+		if Equal(in.Token.Value, vo.V_token) {
+			// check token
+			if vo.Expired_time.Before(now) {
+				fmt.Println("token expired")
+				co = 1
+				return &Status{Code: &co}, nil
+			}
+			co = 0
+			voter_group = vo.Group
+		}
+	}
+
+	if co == -1 {
 		fmt.Println("token error")
-		co = -1
 		return &Status{Code: &co}, nil
 	}
+
 	for _, ele := range RElection {
 		if election_name == ele.Name {
+			findGroup := false
+			for _, grp := range ele.Groups {
+				if grp == voter_group {
+					findGroup = true
+				}
+			}
+			if !findGroup {
+				co = 3
+				return &Status{Code: &co}, nil
+			}
+
 			for _, ch := range ele.Choices {
 				if choice == ch {
 					fmt.Println("find a match")
@@ -80,9 +111,10 @@ func (s *Server) CastVote(ctx context.Context, in *Vote) (*Status, error) {
 		}
 	}
 
-	if findChoice == false {
+	if !findChoice {
 		fmt.Println("cant find choice")
-		co = -1
+		co = 2
+		return &Status{Code: &co}, nil
 	} else {
 		co = 0
 	}
@@ -112,13 +144,28 @@ func (s *Server) CreateElection(ctx context.Context, in *Election) (*Status, err
 	now := time.Now()
 	if t1.Before(now) {
 		fmt.Println("time is expired!")
-		co = -1
+		co = 3
 		return &Status{Code: &co}, nil
 	}
 
-	if Equal(in.Token.Value, tokenByte) == false {
-		fmt.Println("token error")
-		co = -1
+	for _, vo := range RVoter {
+		if vo.Name == in.GetName() {
+			if !Equal(in.Token.Value, vo.V_token) {
+				fmt.Println("token error")
+				co = 1
+				return &Status{Code: &co}, nil
+			}
+			if vo.Expired_time.Before(now) {
+				fmt.Println("token expired")
+				co = 1
+				return &Status{Code: &co}, nil
+			}
+		}
+	}
+
+	if len(in.Groups) == 0 || len(in.Choices) == 0 {
+		fmt.Println("Missing groups or choices")
+		co = 2
 		return &Status{Code: &co}, nil
 	}
 
@@ -154,12 +201,46 @@ func (s *Server) RegisterVoter(ctx context.Context, in *Voter) (*Status, error) 
 	return &Status{Code: &x}, nil
 }
 
+func (s *Server) PreAuth(ctx context.Context, in *VoterName) (*Challenge, error) {
+	return &Challenge{Value: []byte("test challenge")}, nil
+}
+
+func (s *Server) Auth(ctx context.Context, in *AuthRequest) (*AuthToken, error) {
+	fmt.Println(in)
+	for i, vo := range RVoter {
+		if vo.Name == in.GetName().GetName() {
+			sig := in.GetResponse().GetValue()
+
+			if len(sig) != 64 {
+				fmt.Println("sig size error")
+				return nil, nil
+			}
+
+			err := sodium.Bytes("test challenge").SignVerifyDetached(
+				sodium.Signature{sodium.Bytes(sig)},
+				sodium.SignPublicKey{sodium.Bytes(vo.Public_key)},
+			)
+			if err == nil {
+				return &AuthToken{Value: []byte("")}, err
+			}
+			id := uuid.NewString()
+			RVoter[i].V_token = []byte(id)
+			RVoter[i].Expired_time = time.Now().Add(time.Hour)
+			fmt.Println(RVoter[i])
+			return &AuthToken{Value: []byte(id)}, err
+		}
+	}
+
+	return &AuthToken{Value: nil}, nil
+}
+
 type RegisteredVoter struct {
 	Name          string
 	Group         string
 	Public_key    []byte
 	Auth_response []byte
 	V_token       []byte
+	Expired_time  time.Time
 	Alive         bool
 }
 
