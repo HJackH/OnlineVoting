@@ -206,7 +206,6 @@ func (s *Server) PreAuth(ctx context.Context, in *VoterName) (*Challenge, error)
 }
 
 func (s *Server) Auth(ctx context.Context, in *AuthRequest) (*AuthToken, error) {
-	fmt.Println(in)
 	for i, vo := range RVoter {
 		if vo.Name == in.GetName().GetName() {
 			sig := in.GetResponse().GetValue()
@@ -220,13 +219,12 @@ func (s *Server) Auth(ctx context.Context, in *AuthRequest) (*AuthToken, error) 
 				sodium.Signature{sodium.Bytes(sig)},
 				sodium.SignPublicKey{sodium.Bytes(vo.Public_key)},
 			)
-			if err == nil {
+			if err != nil {
 				return &AuthToken{Value: []byte("")}, err
 			}
 			id := uuid.NewString()
 			RVoter[i].V_token = []byte(id)
 			RVoter[i].Expired_time = time.Now().Add(time.Hour)
-			fmt.Println(RVoter[i])
 			return &AuthToken{Value: []byte(id)}, err
 		}
 	}

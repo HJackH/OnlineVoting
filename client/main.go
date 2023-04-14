@@ -222,6 +222,11 @@ func Voter_Login(ctx context.Context, client pb.VotingClient) {
 	b_publickey, _ := base64.StdEncoding.DecodeString(publickey)
 	b_secretkey, _ := base64.StdEncoding.DecodeString(secretkey)
 
+	if len(b_secretkey) != 64 {
+		fmt.Println("secret key length error")
+		return
+	}
+
 	fmt.Println("secret key: ", b_secretkey)
 
 	challenge, _ := client.PreAuth(ctx, &pb.VoterName{Name: &name})
@@ -231,7 +236,7 @@ func Voter_Login(ctx context.Context, client pb.VotingClient) {
 
 	token, _ := client.Auth(ctx, &pb.AuthRequest{
 		Name:     &pb.VoterName{Name: &name},
-		Response: &pb.Response{Value: sig.Bytes[:3]},
+		Response: &pb.Response{Value: sig.Bytes},
 	})
 
 	fmt.Println("token: ", token)
