@@ -52,6 +52,7 @@ func help() {
 	fmt.Println("g : Get_result")
 	fmt.Println("r : Registration")
 	fmt.Println("p : PreAuth")
+	fmt.Println("a : Auth")
 }
 
 func main() {
@@ -75,7 +76,7 @@ func main() {
 	c := pb.NewVotingClient(conn)
 
 	// Contact the server and print out its response.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*1000)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour*10)
 	defer cancel()
 	r, err := c.SayHello(ctx, &pb.HelloRequest{Name: name})
 	if err != nil {

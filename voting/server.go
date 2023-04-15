@@ -104,7 +104,7 @@ func (s *Server) Auth(ctx context.Context, in *AuthRequest) (*AuthToken, error) 
 		fmt.Println("The challenge is properly signed")
 		RVoter[index].V_token = token
 		now := time.Now()
-		end_time := now.Add(time.Minute * 5)
+		end_time := now.Add(time.Hour * 1)
 		fmt.Print("token valid time: ")
 		fmt.Println(end_time)
 		RVoter[index].token_End_time = end_time
