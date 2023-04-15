@@ -8,11 +8,32 @@ service Voting {
     // Sends a greeting
     rpc SayHello (HelloRequest) returns (HelloReply) {}
     rpc RegisterVoter(Voter) returns (Status) {}
+    rpc PreAuth (VoterName) returns (Challenge) {}
+    rpc Auth (AuthRequest) returns (AuthToken) {}
     rpc CreateElection (Election) returns (Status) {}
     rpc CastVote(Vote) returns (Status) {}
     rpc GetResult(ElectionName) returns (ElectionResult) {}
 
 }
+
+message Challenge {
+    required bytes value = 1;
+}
+
+message AuthRequest {
+    required VoterName name = 1;
+    required Response response = 2;
+}
+
+message Response {
+    required bytes value = 1;
+}
+   
+
+message AuthToken {
+    required bytes value = 1;
+}
+   
 
 message Vote {
     required string election_name = 1;
@@ -60,10 +81,6 @@ message Election {
     repeated string choices = 3;
     required google.protobuf.Timestamp end_date = 4;
     required AuthToken token = 5;
-}
-
-message AuthToken {
-    required bytes value = 1;
 }
 
 message VoteCount {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/jamesruan/sodium"
 	"google.golang.org/grpc"
 )
 
@@ -22,11 +23,14 @@ func registeredVoter() (int, error) {
 	fmt.Scan(&group)
 	fmt.Printf("voter's public key:")
 	fmt.Scan(&public_key)
+	pub := sodium.SignPublicKey{
+		Bytes: public_key,
+	}
 
 	v := voting.RegisteredVoter{
 		Name:       name,
 		Group:      group,
-		Public_key: public_key,
+		Public_key: pub,
 		Alive:      true,
 	}
 	voting.RVoter = append(voting.RVoter, v)
@@ -36,18 +40,63 @@ func registeredVoter() (int, error) {
 	return 0, nil
 }
 
+func register_one(in voting.RegisteredVoter) int {
+	fmt.Printf("Register %s...\n", in.Name)
+	var result int
+	name := in.Name
+	for _, vo := range voting.RVoter {
+		if vo.Name == name {
+			fmt.Println(" Voter with the same name already exists")
+			result = 1
+			return result
+		}
+	}
+	voting.RVoter = append(voting.RVoter, in)
+	result = 0
+	return result
+}
+
+func register_all() {
+	fmt.Println("Register all voter in WVoter")
+	for _, vo := range voting.WVoter {
+		//fmt.Printf("vo.allive:")
+		fmt.Println(vo.Alive)
+		if vo.Alive == true {
+			r := register_one(vo)
+			if r == 1 {
+				fmt.Println("register error")
+			}
+		}
+		//voting.WVoter = append(voting.WVoter[:i], voting.WVoter[i+1:]...)
+	}
+	voting.WVoter = nil
+}
+
+func see_all() {
+	fmt.Println("see all registered voter")
+	for _, vo := range voting.RVoter {
+		fmt.Println(vo)
+	}
+}
+
 func unregisterVoter() (int, error) {
 	var name string
 	fmt.Println("Perform unregister voter...")
 	fmt.Println("Please fill in the required information.")
 	fmt.Print("voter's name:")
 	fmt.Scan(&name)
+	find := false
 	for i, vo := range voting.RVoter {
 		if vo.Name == name {
 			voting.RVoter = append(voting.RVoter[:i], voting.RVoter[i+1:]...)
+			find = true
+			break
 		}
 	}
-	fmt.Printf("len: %d\n", len(voting.RVoter))
+	if find == false {
+		fmt.Println("No voter with the name exists on the server")
+		return 1, nil
+	}
 	for _, vo := range voting.RVoter {
 		fmt.Println(vo)
 	}
@@ -59,11 +108,11 @@ func help() {
 	fmt.Println("d : unregister voter")
 	fmt.Println("e : exit")
 	fmt.Println("f : finish register")
+	fmt.Println("s : see all registered voter")
+	fmt.Println("w : Register all voter in WVoter")
 }
 
 func main() {
-	println("gRPC server tutorial in Go")
-	//fmt.Printf("len of rVote: %d\n", len(voting.RVoter))
 	var ip string
 	fmt.Println("Which IP do you want to listen on?")
 	fmt.Scan(&ip)
@@ -107,6 +156,10 @@ func main() {
 		case "f":
 			fmt.Println("complete registration")
 			b = true
+		case "s":
+			see_all()
+		case "w":
+			register_all()
 		default:
 			fmt.Println("unknown task!")
 		}

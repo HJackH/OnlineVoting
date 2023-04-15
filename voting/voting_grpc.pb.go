@@ -21,6 +21,8 @@ const _ = grpc.SupportPackageIsVersion7
 const (
 	Voting_SayHello_FullMethodName       = "/Voting/SayHello"
 	Voting_RegisterVoter_FullMethodName  = "/Voting/RegisterVoter"
+	Voting_PreAuth_FullMethodName        = "/Voting/PreAuth"
+	Voting_Auth_FullMethodName           = "/Voting/Auth"
 	Voting_CreateElection_FullMethodName = "/Voting/CreateElection"
 	Voting_CastVote_FullMethodName       = "/Voting/CastVote"
 	Voting_GetResult_FullMethodName      = "/Voting/GetResult"
@@ -33,6 +35,8 @@ type VotingClient interface {
 	// Sends a greeting
 	SayHello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloReply, error)
 	RegisterVoter(ctx context.Context, in *Voter, opts ...grpc.CallOption) (*Status, error)
+	PreAuth(ctx context.Context, in *VoterName, opts ...grpc.CallOption) (*Challenge, error)
+	Auth(ctx context.Context, in *AuthRequest, opts ...grpc.CallOption) (*AuthToken, error)
 	CreateElection(ctx context.Context, in *Election, opts ...grpc.CallOption) (*Status, error)
 	CastVote(ctx context.Context, in *Vote, opts ...grpc.CallOption) (*Status, error)
 	GetResult(ctx context.Context, in *ElectionName, opts ...grpc.CallOption) (*ElectionResult, error)
@@ -58,6 +62,24 @@ func (c *votingClient) SayHello(ctx context.Context, in *HelloRequest, opts ...g
 func (c *votingClient) RegisterVoter(ctx context.Context, in *Voter, opts ...grpc.CallOption) (*Status, error) {
 	out := new(Status)
 	err := c.cc.Invoke(ctx, Voting_RegisterVoter_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *votingClient) PreAuth(ctx context.Context, in *VoterName, opts ...grpc.CallOption) (*Challenge, error) {
+	out := new(Challenge)
+	err := c.cc.Invoke(ctx, Voting_PreAuth_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *votingClient) Auth(ctx context.Context, in *AuthRequest, opts ...grpc.CallOption) (*AuthToken, error) {
+	out := new(AuthToken)
+	err := c.cc.Invoke(ctx, Voting_Auth_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +120,8 @@ type VotingServer interface {
 	// Sends a greeting
 	SayHello(context.Context, *HelloRequest) (*HelloReply, error)
 	RegisterVoter(context.Context, *Voter) (*Status, error)
+	PreAuth(context.Context, *VoterName) (*Challenge, error)
+	Auth(context.Context, *AuthRequest) (*AuthToken, error)
 	CreateElection(context.Context, *Election) (*Status, error)
 	CastVote(context.Context, *Vote) (*Status, error)
 	GetResult(context.Context, *ElectionName) (*ElectionResult, error)
@@ -113,6 +137,12 @@ func (UnimplementedVotingServer) SayHello(context.Context, *HelloRequest) (*Hell
 }
 func (UnimplementedVotingServer) RegisterVoter(context.Context, *Voter) (*Status, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterVoter not implemented")
+}
+func (UnimplementedVotingServer) PreAuth(context.Context, *VoterName) (*Challenge, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PreAuth not implemented")
+}
+func (UnimplementedVotingServer) Auth(context.Context, *AuthRequest) (*AuthToken, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Auth not implemented")
 }
 func (UnimplementedVotingServer) CreateElection(context.Context, *Election) (*Status, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateElection not implemented")
@@ -168,6 +198,42 @@ func _Voting_RegisterVoter_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VotingServer).RegisterVoter(ctx, req.(*Voter))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Voting_PreAuth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VoterName)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VotingServer).PreAuth(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Voting_PreAuth_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VotingServer).PreAuth(ctx, req.(*VoterName))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Voting_Auth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AuthRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VotingServer).Auth(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Voting_Auth_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VotingServer).Auth(ctx, req.(*AuthRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -240,6 +306,14 @@ var Voting_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RegisterVoter",
 			Handler:    _Voting_RegisterVoter_Handler,
+		},
+		{
+			MethodName: "PreAuth",
+			Handler:    _Voting_PreAuth_Handler,
+		},
+		{
+			MethodName: "Auth",
+			Handler:    _Voting_Auth_Handler,
 		},
 		{
 			MethodName: "CreateElection",

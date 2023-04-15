@@ -11,10 +11,23 @@ import (
 	"OnlineVoting/voting"
 	pb "OnlineVoting/voting"
 
+	"github.com/jamesruan/sodium"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
+
+type CRegisteredVoter struct {
+	Name      string
+	Group     string
+	key_pair  sodium.SignKP
+	sig       sodium.Signature
+	V_token   []byte
+	Challenge []byte
+	Alive     bool
+}
+
+var CVoter []CRegisteredVoter
 
 const (
 	defaultName = "world"
@@ -32,11 +45,13 @@ func GetIntPointerS(value string) *string {
 }
 
 func help() {
-	fmt.Println("c : Create_Electio")
+	fmt.Println("c : Create_Election")
 	fmt.Println("e : exit")
 	fmt.Println("f : finish task and break")
 	fmt.Println("v : Cast_Vote")
 	fmt.Println("g : Get_result")
+	fmt.Println("r : Registration")
+	fmt.Println("p : PreAuth")
 }
 
 func main() {
@@ -90,6 +105,12 @@ func main() {
 			Cast_Vote(ctx, c)
 		case "g":
 			Get_result(ctx, c)
+		case "r":
+			Register(ctx, c)
+		case "p":
+			pre_auth(ctx, c)
+		case "a":
+			auth(ctx, c)
 		default:
 			fmt.Println("unknown task!")
 		}
@@ -101,18 +122,143 @@ func main() {
 
 }
 
+func pre_auth(ctx context.Context, client pb.VotingClient) {
+	fmt.Println("Perform PreAuth...")
+	var name string
+	fmt.Println("Please fill in the required information.")
+	fmt.Print("voter's name:")
+	fmt.Scan(&name)
+	find := false
+	var index int
+	for i, vo := range CVoter {
+		if vo.Name == name {
+			find = true
+			index = i
+			break
+		}
+	}
+	if find == false {
+		fmt.Println("can't find name")
+		return
+	}
+	r, err := client.PreAuth(ctx, &pb.VoterName{
+		Name: &name,
+	})
+	if err != nil {
+		fmt.Println("preAyth error")
+	}
+	CVoter[index].Challenge = r.Value
+	//fmt.Println(string(r.Value))
+	ch := sodium.Bytes(r.Value)
+	sig := ch.SignDetached(CVoter[index].key_pair.SecretKey)
+	CVoter[index].sig = sig
+	//check
+
+	// verify := sodium.Bytes(CVoter[index].Auth_response)
+	// mess, _ := verify.SignOpen(CVoter[index].key_pair.PublicKey)
+	// fmt.Printf("check... :%s\n", string(mess[:]))
+}
+
+func auth(ctx context.Context, client pb.VotingClient) {
+	fmt.Println("Perform Auth...")
+	var name string
+	fmt.Println("Please fill in the required information.")
+	fmt.Print("voter's name:")
+	fmt.Scan(&name)
+	find := false
+	var index int
+	for i, vo := range CVoter {
+		if vo.Name == name {
+			find = true
+			index = i
+			break
+		}
+	}
+	if find == false {
+		fmt.Println("can't find name")
+		return
+	}
+
+	r, _ := client.Auth(ctx, &pb.AuthRequest{
+		Name: &pb.VoterName{
+			Name: &name,
+		},
+		Response: &pb.Response{
+			Value: CVoter[index].sig.Bytes,
+		},
+	})
+	fmt.Print("return token:")
+	fmt.Println(r.Value)
+	CVoter[index].V_token = r.Value
+}
+
+func Register(ctx context.Context, client pb.VotingClient) {
+	var name, group string
+	fmt.Println("Perform register...")
+	fmt.Println("Please fill in the required information.")
+	fmt.Print("voter's name:")
+	fmt.Scan(&name)
+	fmt.Print("voter's group:")
+	fmt.Scan(&group)
+	myKP := sodium.MakeSignKP()
+	fmt.Println(myKP.PublicKey)
+	r, err := client.RegisterVoter(ctx, &pb.Voter{
+		Name:      &name,
+		Group:     &group,
+		PublicKey: myKP.PublicKey.Bytes,
+	})
+	vo := CRegisteredVoter{
+		Name:     name,
+		Group:    group,
+		key_pair: myKP,
+		Alive:    true,
+	}
+	CVoter = append(CVoter, vo)
+	fmt.Print("result status:")
+	fmt.Println(r)
+	if err != nil {
+		fmt.Println("Register error")
+		fmt.Println(err)
+	}
+}
+
 func Cast_Vote(ctx context.Context, client pb.VotingClient) {
 	fmt.Println("(CastVote)please fill the following data...")
+	var name string
+	fmt.Print("your name:(need your token)")
+	fmt.Scan(&name)
+	find := false
+	var token []byte
+	//var index int
+	for _, vo := range CVoter {
+		if vo.Name == name {
+			find = true
+			token = vo.V_token
+			break
+		}
+	}
+	if find == false {
+		fmt.Println("can't find name")
+		return
+	}
+
+	if token == nil {
+		fmt.Println("not have token yet")
+		return
+	}
+
 	var election_name string
-	fmt.Println("Election's name:")
+	fmt.Print("Election's name: ")
 	fmt.Scan(&election_name)
 	var choice_name string
-	fmt.Println("Choice's name:")
+	fmt.Print("Choice's name: ")
 	fmt.Scan(&choice_name)
 	r, err := client.CastVote(ctx, &pb.Vote{
 		ElectionName: &election_name,
 		ChoiceName:   &choice_name,
-		Token:        &voting.AuthToken{Value: tokenByte},
+		Token: &voting.AuthToken{
+			Value: token,
+		},
 	})
 	fmt.Println("result status:")
 	fmt.Println(r)
@@ -124,6 +270,28 @@ func Cast_Vote(ctx context.Context, client pb.VotingClient) {
 
 func Get_result(ctx context.Context, client pb.VotingClient) {
 	fmt.Println("(GetResult)please fill the following data...")
+	var name string
+	fmt.Print("your name:(need your token)")
+	fmt.Scan(&name)
+	find := false
+	var token []byte
+	//var index int
+	for _, vo := range CVoter {
+		if vo.Name == name {
+			find = true
+			token = vo.V_token
+			break
+		}
+	}
+	if find == false {
+		fmt.Println("can't find name")
+		return
+	}
+
+	if token == nil {
+		fmt.Println("not have token yet")
+		return
+	}
 	var election_name string
 	fmt.Println("Election's name:")
 	fmt.Scan(&election_name)
@@ -139,19 +307,41 @@ func Get_result(ctx context.Context, client pb.VotingClient) {
 
 func Create_Election(ctx context.Context, client pb.VotingClient) {
 	fmt.Println("(CreateElection)please fill the following data...")
+	var name string
+	fmt.Print("your name:(need your token)")
+	fmt.Scan(&name)
+	find := false
+	var token []byte
+	//var index int
+	for _, vo := range CVoter {
+		if vo.Name == name {
+			find = true
+			token = vo.V_token
+			break
+		}
+	}
+	if find == false {
+		fmt.Println("can't find name")
+		return
+	}
+
+	if token == nil {
+		fmt.Println("not have token yet")
+		return
+	}
 
 	var election_name string
-	fmt.Println("Election's name:")
+	fmt.Print("Election's name: ")
 	fmt.Scan(&election_name)
 
 	var time_m int
-	fmt.Println("How many minutes will the election be held?")
+	fmt.Print("How many minutes will the election be held? ")
 	fmt.Scan(&time_m)
 
 	t := time.Now().Add(time.Minute * time.Duration(time_m))
 	end_date := timestamppb.New(t)
 	t1 := time.Unix(end_date.GetSeconds(), 0)
-	fmt.Println("end time:")
+	fmt.Print("end time: ")
 	fmt.Println(t1)
 	var groups []string
 	fmt.Println("Which groups can vote?(e for end)")
@@ -174,16 +364,15 @@ func Create_Election(ctx context.Context, client pb.VotingClient) {
 		choices = append(choices, temp)
 	}
 
-	_, err := client.CreateElection(ctx, &pb.Election{
+	r, _ := client.CreateElection(ctx, &pb.Election{
 		Name:    &election_name,
 		EndDate: end_date,
-		Token:   &voting.AuthToken{Value: tokenByte},
+		Token:   &voting.AuthToken{Value: token},
 		Groups:  groups,
 		Choices: choices,
 	})
-	if err != nil {
-		fmt.Println("create election error")
-		fmt.Println(err)
-	}
+	fmt.Print("Create Election result:")
+	te := *r.Code
+	fmt.Println(te)
 
 }
