@@ -58,10 +58,10 @@ func help() {
 func main() {
 	flag.Parse()
 	var ip string
-	fmt.Println("Which IP do you want to connect to?")
+	fmt.Println("Which IP do you want to connect to?(primary)")
 	fmt.Scan(&ip)
 	var port string
-	fmt.Println("Which Port do you want to connect to?")
+	fmt.Println("Which Port do you want to connect to?(primary)")
 	fmt.Scan(&port)
 	ip += ":"
 	ip += port
@@ -74,6 +74,23 @@ func main() {
 
 	defer conn.Close()
 	c := pb.NewVotingClient(conn)
+
+	fmt.Println("Which IP do you want to connect to?(secondary)")
+	fmt.Scan(&ip)
+
+	fmt.Println("Which Port do you want to connect to?(secondary)")
+	fmt.Scan(&port)
+	ip += ":"
+	ip += port
+
+	// Set up a connection to the server.
+	conn2, err2 := grpc.Dial(ip, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err2 != nil {
+		log.Fatalf("did not connect: %v", err2)
+	}
+
+	defer conn2.Close()
+	c2 := pb.NewVotingClient(conn2)
 
 	// Contact the server and print out its response.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Hour*10)
@@ -101,17 +118,17 @@ func main() {
 			fmt.Println("finish task and break")
 			b = true
 		case "c":
-			Create_Election(ctx, c)
+			Create_Election(ctx, c, c2)
 		case "v":
-			Cast_Vote(ctx, c)
+			Cast_Vote(ctx, c, c2)
 		case "g":
-			Get_result(ctx, c)
+			Get_result(ctx, c, c2)
 		case "r":
-			Register(ctx, c)
+			Register(ctx, c, c2)
 		case "p":
-			pre_auth(ctx, c)
+			pre_auth(ctx, c, c2)
 		case "a":
-			auth(ctx, c)
+			auth(ctx, c, c2)
 		default:
 			fmt.Println("unknown task!")
 		}
@@ -123,7 +140,7 @@ func main() {
 
 }
 
-func pre_auth(ctx context.Context, client pb.VotingClient) {
+func pre_auth(ctx context.Context, client pb.VotingClient, client2 pb.VotingClient) {
 	fmt.Println("Perform PreAuth...")
 	var name string
 	fmt.Println("Please fill in the required information.")
@@ -146,7 +163,16 @@ func pre_auth(ctx context.Context, client pb.VotingClient) {
 		Name: &name,
 	})
 	if err != nil {
-		fmt.Println("preAyth error")
+		fmt.Println("preAuth error")
+		fmt.Println("switch to secondary server")
+
+		r, err = client2.PreAuth(ctx, &pb.VoterName{
+			Name: &name,
+		})
+
+		if err != nil {
+			fmt.Println("preAuth error with secondary server")
+		}
 	}
 	CVoter[index].Challenge = r.Value
 	//fmt.Println(string(r.Value))
@@ -160,7 +186,7 @@ func pre_auth(ctx context.Context, client pb.VotingClient) {
 	// fmt.Printf("check... :%s\n", string(mess[:]))
 }
 
-func auth(ctx context.Context, client pb.VotingClient) {
+func auth(ctx context.Context, client pb.VotingClient, client2 pb.VotingClient) {
 	fmt.Println("Perform Auth...")
 	var name string
 	fmt.Println("Please fill in the required information.")
@@ -180,7 +206,7 @@ func auth(ctx context.Context, client pb.VotingClient) {
 		return
 	}
 
-	r, _ := client.Auth(ctx, &pb.AuthRequest{
+	r, err := client.Auth(ctx, &pb.AuthRequest{
 		Name: &pb.VoterName{
 			Name: &name,
 		},
@@ -188,12 +214,29 @@ func auth(ctx context.Context, client pb.VotingClient) {
 			Value: CVoter[index].sig.Bytes,
 		},
 	})
+	if err != nil {
+		fmt.Println("auth error")
+		fmt.Println("switch to secondary server")
+
+		r, err = client2.Auth(ctx, &pb.AuthRequest{
+			Name: &pb.VoterName{
+				Name: &name,
+			},
+			Response: &pb.Response{
+				Value: CVoter[index].sig.Bytes,
+			},
+		})
+
+		if err != nil {
+			fmt.Println("Auth error with secondary server")
+		}
+	}
 	fmt.Print("return token:")
 	fmt.Println(r.Value)
 	CVoter[index].V_token = r.Value
 }
 
-func Register(ctx context.Context, client pb.VotingClient) {
+func Register(ctx context.Context, client pb.VotingClient, client2 pb.VotingClient) {
 	var name, group string
 	fmt.Println("Perform register...")
 	fmt.Println("Please fill in the required information.")
@@ -208,6 +251,24 @@ func Register(ctx context.Context, client pb.VotingClient) {
 		Group:     &group,
 		PublicKey: myKP.PublicKey.Bytes,
 	})
+
+	if err != nil {
+		fmt.Println("Register error")
+		fmt.Println(err)
+		fmt.Println("switch to secondary server")
+
+		r, err = client2.RegisterVoter(ctx, &pb.Voter{
+			Name:      &name,
+			Group:     &group,
+			PublicKey: myKP.PublicKey.Bytes,
+		})
+
+		if err != nil {
+			fmt.Println("Register error")
+			fmt.Println(err)
+		}
+	}
+
 	vo := CRegisteredVoter{
 		Name:     name,
 		Group:    group,
@@ -217,13 +278,9 @@ func Register(ctx context.Context, client pb.VotingClient) {
 	CVoter = append(CVoter, vo)
 	fmt.Print("result status:")
 	fmt.Println(r)
-	if err != nil {
-		fmt.Println("Register error")
-		fmt.Println(err)
-	}
 }
 
-func Cast_Vote(ctx context.Context, client pb.VotingClient) {
+func Cast_Vote(ctx context.Context, client pb.VotingClient, client2 pb.VotingClient) {
 	fmt.Println("(CastVote)please fill the following data...")
 	var name string
 	fmt.Print("your name:(need your token)")
@@ -261,15 +318,31 @@ func Cast_Vote(ctx context.Context, client pb.VotingClient) {
 			Value: token,
 		},
 	})
-	fmt.Println("result status:")
-	fmt.Println(r)
+
 	if err != nil {
 		fmt.Println("CastVote error")
 		fmt.Println(err)
+		fmt.Println("switch to secondary server")
+
+		r, err = client2.CastVote(ctx, &pb.Vote{
+			ElectionName: &election_name,
+			ChoiceName:   &choice_name,
+			Token: &voting.AuthToken{
+				Value: token,
+			},
+		})
+
+		if err != nil {
+			fmt.Println("CastVote error")
+			fmt.Println(err)
+		}
 	}
+
+	fmt.Println("result status:")
+	fmt.Println(r)
 }
 
-func Get_result(ctx context.Context, client pb.VotingClient) {
+func Get_result(ctx context.Context, client pb.VotingClient, client2 pb.VotingClient) {
 	fmt.Println("(GetResult)please fill the following data...")
 	var name string
 	fmt.Print("your name:(need your token)")
@@ -300,13 +373,19 @@ func Get_result(ctx context.Context, client pb.VotingClient) {
 	if err != nil {
 		fmt.Println("Get_result error")
 		fmt.Println(err)
-	} else {
-		fmt.Println("election result:")
-		fmt.Println(result)
+		fmt.Println("switch to secondary server")
+
+		result, err = client2.GetResult(ctx, &pb.ElectionName{Name: &election_name})
+		if err != nil {
+			fmt.Println("Get_result error")
+			fmt.Println(err)
+		}
 	}
+	fmt.Println("election result:")
+	fmt.Println(result)
 }
 
-func Create_Election(ctx context.Context, client pb.VotingClient) {
+func Create_Election(ctx context.Context, client pb.VotingClient, client2 pb.VotingClient) {
 	fmt.Println("(CreateElection)please fill the following data...")
 	var name string
 	fmt.Print("your name:(need your token)")
@@ -365,13 +444,32 @@ func Create_Election(ctx context.Context, client pb.VotingClient) {
 		choices = append(choices, temp)
 	}
 
-	r, _ := client.CreateElection(ctx, &pb.Election{
+	r, err := client.CreateElection(ctx, &pb.Election{
 		Name:    &election_name,
 		EndDate: end_date,
 		Token:   &voting.AuthToken{Value: token},
 		Groups:  groups,
 		Choices: choices,
 	})
+
+	if err != nil {
+		fmt.Println("Create_Election error")
+		fmt.Println(err)
+		fmt.Println("switch to secondary server")
+
+		r, err = client2.CreateElection(ctx, &pb.Election{
+			Name:    &election_name,
+			EndDate: end_date,
+			Token:   &voting.AuthToken{Value: token},
+			Groups:  groups,
+			Choices: choices,
+		})
+
+		if err != nil {
+			fmt.Println("Create_Election error")
+			fmt.Println(err)
+		}
+	}
 	fmt.Print("Create Election result:")
 	te := *r.Code
 	fmt.Println(te)

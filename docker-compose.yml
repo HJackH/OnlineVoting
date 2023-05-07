@@ -1,0 +1,85 @@
+services:
+  mongo1:
+    container_name: mongo1
+    image: mongo:latest
+    volumes:
+      - ./init_db.sh:/scripts/init_db.sh
+    networks:
+      - mongo-network
+    ports:
+      - 30000:27017
+    depends_on:
+      - mongo2
+      - mongo3
+    links:
+      - mongo2
+      - mongo3
+    restart: always
+    entrypoint: [ "/usr/bin/mongod", "--bind_ip_all", "--replSet", "dbrs" ]
+
+  mongo2:
+    container_name: mongo2
+    image: mongo:latest
+    volumes:
+      - ./init_db.sh:/scripts/init_db.sh
+    networks:
+      - mongo-network
+    ports:
+      - 30001:27017
+    restart: always
+    entrypoint: [ "/usr/bin/mongod", "--bind_ip_all", "--replSet", "dbrs" ]
+  mongo3:
+    container_name: mongo3
+    image: mongo:latest
+    volumes:
+      - ./init_db.sh:/scripts/init_db.sh
+    networks:
+      - mongo-network
+    ports:
+      - 30002:27017
+    restart: always
+    entrypoint: [ "/usr/bin/mongod", "--bind_ip_all", "--replSet", "dbrs" ]
+
+  server1:
+    container_name: server1
+    image: golang:latest
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./:/storage
+    networks:
+      - mongo-network
+    ports:
+      - 50000:50000
+    restart: "no"
+    working_dir: /storage
+
+  server2:
+    container_name: server2
+    image: golang:latest
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./:/storage
+    networks:
+      - mongo-network
+    ports:
+      - 50001:50001
+    restart: "no"
+    working_dir: /storage
+
+  client1:
+    container_name: client1
+    image: golang:latest
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./:/storage
+    networks:
+      - mongo-network
+    restart: "no"
+    working_dir: /storage
+
+networks:
+  mongo-network:
+    driver: bridge

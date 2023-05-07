@@ -7,13 +7,16 @@ import (
 	"time"
 
 	"github.com/jamesruan/sodium"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
-var RVoter []RegisteredVoter
-var WVoter []RegisteredVoter
-var RElection []election
 var tokenByte = []byte("GoodLuck")
 var challenge_byte = []byte("NiceDay")
+var RVoter_coll *mongo.Collection
+var WVoter_coll *mongo.Collection
+var RElection_coll *mongo.Collection
 
 // We define a server struct that implements the server interface.
 type Server struct {
@@ -41,19 +44,22 @@ func (s *Server) SayHello(ctx context.Context, in *HelloRequest) (*HelloReply, e
 
 func (s *Server) PreAuth(ctx context.Context, in *VoterName) (*Challenge, error) {
 	fmt.Println()
+
 	name := *in.Name
-	find := false
-	for i, vo := range RVoter {
-		if name == vo.Name {
-			find = true
-			RVoter[i].Challenge = challenge_byte
-			break
-		}
-	}
-	if find == false {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var vo RegisteredVoter
+	filter := bson.D{{"name", name}}
+	update := bson.D{{"$set", bson.D{{"challenge", challenge_byte}}}}
+	err := RVoter_coll.FindOneAndUpdate(ctx, filter, update).Decode(&vo)
+
+	fmt.Println("err:", err)
+	if err != nil {
 		fmt.Println("Can't find voter name")
 		return nil, nil
 	}
+
 	ch := Challenge{
 		Value: challenge_byte,
 	}
@@ -66,28 +72,25 @@ func (s *Server) Auth(ctx context.Context, in *AuthRequest) (*AuthToken, error) 
 	sig := sodium.Signature{
 		Bytes: in.Response.Value,
 	}
-	// fmt.Print("len:")
-	// fmt.Println(len(in.Response.Value))
+
 	if len(in.Response.Value) != 64 {
 		fmt.Println("sig size error")
 		return nil, nil
 	}
-	find := false
-	var index int
-	for i, vo := range RVoter {
-		if name == vo.Name {
-			find = true
-			RVoter[i].Challenge = challenge_byte
-			index = i
-			break
-		}
-	}
-	if find == false {
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var vo RegisteredVoter
+	err := RVoter_coll.FindOne(ctx, bson.D{{"name", name}}).Decode(&vo)
+
+	if err != nil {
 		fmt.Println("Can't find voter name")
 		return nil, nil
 	}
+
 	ch := sodium.Bytes(challenge_byte)
-	err := ch.SignVerifyDetached(sig, RVoter[index].Public_key)
+	err = ch.SignVerifyDetached(sig, vo.Public_key)
 	if err != nil {
 		fmt.Println("SignVerifyDetached error")
 		fmt.Println(err)
@@ -102,12 +105,19 @@ func (s *Server) Auth(ctx context.Context, in *AuthRequest) (*AuthToken, error) 
 	}
 	if err == nil {
 		fmt.Println("The challenge is properly signed")
-		RVoter[index].V_token = token
 		now := time.Now()
 		end_time := now.Add(time.Hour * 1)
 		fmt.Print("token valid time: ")
 		fmt.Println(end_time)
-		RVoter[index].token_End_time = end_time
+
+		filter := bson.D{{"name", name}}
+		update := bson.D{{"$set", bson.D{{"v_token", token}, {"token_end_time", end_time.Format("2006-01-02 15:04:05")}}}}
+		err = RVoter_coll.FindOneAndUpdate(ctx, filter, update).Decode(&vo)
+
+		if err != nil {
+			fmt.Println("update RVoter failed")
+			fmt.Println(err)
+		}
 	}
 	return &au, err
 }
@@ -115,91 +125,93 @@ func (s *Server) Auth(ctx context.Context, in *AuthRequest) (*AuthToken, error) 
 func (s *Server) GetResult(ctx context.Context, in *ElectionName) (*ElectionResult, error) {
 	election_name := *in.Name
 	var counts []*VoteCount
-	success := false
 	var co int32
-	for _, ele := range RElection {
-		if election_name == ele.Name {
-			now := time.Now()
-			if ele.End_time.Before(now) {
-				success = true
-				for _, ch := range ele.Choices {
-					fmt.Print("choice: ")
-					fmt.Println(ch)
-					t := ele.Result[ch]
-					c_name := ch
-					temp := VoteCount{ChoiceName: &c_name, Count: &t}
-					counts = append(counts, &temp)
-				}
-				fmt.Println(counts)
-			} else {
-				fmt.Println("time is not up yet")
-				co = 2
-				counts = nil
-				return &ElectionResult{Status: &co, Counts: counts}, nil
-			}
-		}
-	}
 
-	co = 0
-	if !success {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var ele election
+	err := RElection_coll.FindOne(ctx, bson.D{{"name", election_name}}).Decode(&ele)
+
+	if err != nil {
 		fmt.Println("Non-existent election")
 		co = 1
 		return &ElectionResult{Status: &co, Counts: counts}, nil
 	}
-	return &ElectionResult{Status: &co, Counts: counts}, nil
 
+	now := time.Now()
+	ed_time, err := time.Parse("2006-01-02 15:04:05", ele.End_time)
+	if ed_time.After(now) {
+		fmt.Println("time is not up yet")
+		co = 2
+		counts = nil
+		return &ElectionResult{Status: &co, Counts: counts}, nil
+	}
+
+	for _, ch := range ele.Choices {
+		fmt.Print("choice: ")
+		fmt.Println(ch)
+		t := ele.Result[ch]
+		c_name := ch
+		temp := VoteCount{ChoiceName: &c_name, Count: &t}
+		counts = append(counts, &temp)
+	}
+	fmt.Println(counts)
+
+	co = 0
+	return &ElectionResult{Status: &co, Counts: counts}, nil
 }
 
 func (s *Server) CastVote(ctx context.Context, in *Vote) (*Status, error) {
 	var co int32
 	var group string
 	var name string
-	var index int
+	// var index int
 	token := in.Token.Value
-	find := false
-	for _, vo := range RVoter {
-		if Equal(token, vo.V_token) == true && token != nil {
-			now := time.Now()
-			if vo.token_End_time.Before(now) == true {
-				fmt.Println("token expire")
-				break
-			} //token expire
-			find = true //token has not expired
-			group = vo.Group
-			name = vo.Name
-			break
-		}
-	}
-	if find == false { //token error
-		fmt.Println("token error")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var vo RegisteredVoter
+	err := RVoter_coll.FindOne(ctx, bson.D{{"v_token", token}}).Decode(&vo)
+
+	if err != nil {
+		fmt.Println("token not found")
 		co = 1
-		fmt.Println(co)
-		return &Status{Code: &co}, nil
-	}
-	var election_name string
-	election_name = *in.ElectionName
-	findEle := false
-	var right_ele election
-	for i, ele := range RElection {
-		if election_name == ele.Name {
-			findEle = true
-			right_ele = ele
-			index = i
-			break
-		}
-	}
-	if findEle == false {
-		fmt.Println("can't find election")
-		co = 2
 		return &Status{Code: &co}, nil
 	}
 
 	now := time.Now()
-	if right_ele.End_time.Before(now) == true {
+	tk_ed_time, err := time.Parse("2006-01-02 15:04:05", vo.Token_End_time)
+	if tk_ed_time.Before(now) == true {
+		fmt.Println("token expire")
+		co = 1
+		return &Status{Code: &co}, nil
+	}
+
+	group = vo.Group
+	name = vo.Name
+
+	var election_name string
+	election_name = *in.ElectionName
+	var right_ele election
+	err = RElection_coll.FindOne(ctx, bson.D{{"name", election_name}}).Decode(&right_ele)
+
+	if err != nil {
+		fmt.Println("Non-existent election")
+		co = 2
+		return &Status{Code: &co}, nil
+	}
+
+	now = time.Now()
+	ele_ed_time, err := time.Parse("2006-01-02 15:04:05", right_ele.End_time)
+	if ele_ed_time.Before(now) == true {
 		fmt.Println("Election deadline has passed")
-		RElection = append(RElection[:index], RElection[index+1:]...)
-		fmt.Println("RElection:")
-		fmt.Println(RElection)
+		res, err2 := RElection_coll.DeleteOne(ctx, bson.D{{"name", election_name}})
+		fmt.Println(res)
+		if err2 != nil {
+			fmt.Println("delete failed")
+		}
 		co = 5
 		return &Status{Code: &co}, nil
 	}
@@ -226,15 +238,31 @@ func (s *Server) CastVote(ctx context.Context, in *Vote) (*Status, error) {
 
 	choice := *in.ChoiceName
 
+	fmt.Println("err:", err)
+	if err != nil {
+		fmt.Println("Can't find voter name")
+		return nil, nil
+	}
+
 	for _, ch := range right_ele.Choices {
 		if choice == ch {
-			RElection[index].Result[choice]++
-			RElection[index].Already_voted = append(RElection[index].Already_voted, name)
+			right_ele.Result[choice]++
+			right_ele.Already_voted = append(right_ele.Already_voted, name)
 			break
 		}
 	}
 
-	fmt.Println(RElection)
+	var ele election
+	filter := bson.D{{"name", election_name}}
+	update := bson.D{{"$set", bson.D{{"result", right_ele.Result}, {"already_voted", right_ele.Already_voted}}}}
+	err = RElection_coll.FindOneAndUpdate(ctx, filter, update).Decode(&ele)
+
+	if err != nil {
+		fmt.Println("Non-existent election")
+		co = 2
+		return &Status{Code: &co}, nil
+	}
+	co = 0
 	return &Status{Code: &co}, nil
 
 }
@@ -265,21 +293,27 @@ func (s *Server) CreateElection(ctx context.Context, in *Election) (*Status, err
 	}
 
 	token := in.Token.Value
-	find := false
-	for _, vo := range RVoter {
-		if Equal(token, vo.V_token) == true && token != nil {
-			now := time.Now()
-			if vo.token_End_time.Before(now) == true {
-				fmt.Println("token expire")
-				break
-			} //token expire
-			find = true //token has not expired
-		}
-	}
-	if find == false { //token error
-		fmt.Println("token error")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var vo RegisteredVoter
+	err := RVoter_coll.FindOne(ctx, bson.D{{"v_token", token}}).Decode(&vo)
+
+	if err != nil {
+		fmt.Println("token not found")
 		co = 1
-		fmt.Println(co)
+		return &Status{Code: &co}, nil
+	}
+
+	fmt.Println(vo)
+
+	fmt.Println(now)
+	fmt.Println(vo.Token_End_time)
+	tk_ed_time, err := time.Parse("2006-01-02 15:04:05", vo.Token_End_time)
+	if tk_ed_time.Before(now) == true {
+		fmt.Println("token expire")
+		co = 1
 		return &Status{Code: &co}, nil
 	}
 
@@ -298,12 +332,17 @@ func (s *Server) CreateElection(ctx context.Context, in *Election) (*Status, err
 		Name:     *in.Name,
 		Groups:   in.Groups,
 		Choices:  in.Choices,
-		End_time: t1,
+		End_time: t1.Format("2006-01-02 15:04:05"),
 		Alive:    true,
 		Result:   result,
 	}
-	fmt.Println(e)
-	RElection = append(RElection, e)
+
+	res, err := RElection_coll.InsertOne(ctx, e)
+
+	fmt.Println(res)
+	if err != nil {
+		fmt.Println("insert to RElection failed")
+	}
 
 	co = 0
 	return &Status{Code: &co}, nil
@@ -330,29 +369,40 @@ func (s *Server) RegisterVoter(ctx context.Context, in *Voter) (*Status, error) 
 		Alive:      true,
 	}
 	fmt.Println(voter)
-	WVoter = append(WVoter, voter)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res, err := WVoter_coll.InsertOne(ctx, voter)
+
+	fmt.Println(res)
+	if err != nil {
+		fmt.Println("insert to WVoter failed")
+	}
+	// WVoter = append(WVoter, voter)
 	var x int32
 	x = 0
 	return &Status{Code: &x}, nil
 }
 
 type RegisteredVoter struct {
-	Name           string
-	Group          string
-	Public_key     sodium.SignPublicKey
-	Auth_response  []byte
-	V_token        []byte
-	Challenge      []byte
-	Alive          bool
-	token_End_time time.Time
+	ID             primitive.ObjectID   `bson:"_id,omitempty"`
+	Name           string               `bson:"name"`
+	Group          string               `bson:"group"`
+	Public_key     sodium.SignPublicKey `bson:"public_key"`
+	Auth_response  []byte               `bson:"auth_response"`
+	V_token        []byte               `bson:"v_token"`
+	Challenge      []byte               `bson:"challenge"`
+	Alive          bool                 `bson:"alive"`
+	Token_End_time string               `bson:"token_end_time"`
 }
 
 type election struct {
-	Name          string
-	Groups        []string
-	Choices       []string
-	Already_voted []string
-	End_time      time.Time
-	Alive         bool
-	Result        map[string]int32
+	ID            primitive.ObjectID `bson:"_id,omitempty"`
+	Name          string             `bson:"name"`
+	Groups        []string           `bson:"groups"`
+	Choices       []string           `bson:"choices"`
+	Already_voted []string           `bson:"already_voted"`
+	End_time      string             `bson:"end_time"`
+	Alive         bool               `bson:"alive"`
+	Result        map[string]int32   `bson:"result"`
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"OnlineVoting/voting"
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -9,6 +10,9 @@ import (
 	"time"
 
 	"github.com/jamesruan/sodium"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"google.golang.org/grpc"
 )
 
@@ -33,48 +37,93 @@ func registeredVoter() (int, error) {
 		Public_key: pub,
 		Alive:      true,
 	}
-	voting.RVoter = append(voting.RVoter, v)
-	for _, vo := range voting.RVoter {
-		fmt.Println(vo)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res, err := voting.RVoter_coll.InsertOne(ctx, v)
+	fmt.Println(res)
+	if err != nil {
+		fmt.Println("register failed")
 	}
+
 	return 0, nil
 }
 
 func register_one(in voting.RegisteredVoter) int {
 	fmt.Printf("Register %s...\n", in.Name)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	var result int
-	name := in.Name
-	for _, vo := range voting.RVoter {
-		if vo.Name == name {
-			fmt.Println(" Voter with the same name already exists")
-			result = 1
-			return result
-		}
+
+	var vo voting.RegisteredVoter
+	err := voting.RVoter_coll.FindOne(ctx, bson.D{{"name", in.Name}}).Decode(&vo)
+
+	// found same name in database
+	if err == nil {
+		fmt.Println(" Voter with the same name already exists")
+		result = 1
+		return result
 	}
-	voting.RVoter = append(voting.RVoter, in)
+
+	voting.RVoter_coll.InsertOne(ctx, in)
 	result = 0
 	return result
 }
 
 func register_all() {
 	fmt.Println("Register all voter in WVoter")
-	for _, vo := range voting.WVoter {
-		//fmt.Printf("vo.allive:")
-		fmt.Println(vo.Alive)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cursor, err := voting.WVoter_coll.Find(ctx, bson.M{})
+
+	if err != nil {
+		fmt.Println("list all voter error")
+		fmt.Println(err)
+	}
+
+	for cursor.Next(ctx) {
+		var vo voting.RegisteredVoter
+		if err := cursor.Decode(&vo); err != nil {
+			log.Fatal(err)
+		}
+
+		fmt.Println(vo)
 		if vo.Alive == true {
 			r := register_one(vo)
 			if r == 1 {
 				fmt.Println("register error")
 			}
 		}
-		//voting.WVoter = append(voting.WVoter[:i], voting.WVoter[i+1:]...)
 	}
-	voting.WVoter = nil
+
+	// clear all voter in WVoter
+	res, err := voting.WVoter_coll.DeleteMany(ctx, bson.M{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("deleted %v documents\n", res.DeletedCount)
 }
 
 func see_all() {
 	fmt.Println("see all registered voter")
-	for _, vo := range voting.RVoter {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cursor, err := voting.RVoter_coll.Find(ctx, bson.M{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer cursor.Close(ctx)
+
+	for cursor.Next(ctx) {
+		var vo voting.RegisteredVoter
+		if err := cursor.Decode(&vo); err != nil {
+			log.Fatal(err)
+		}
+
 		fmt.Println(vo)
 	}
 }
@@ -85,21 +134,18 @@ func unregisterVoter() (int, error) {
 	fmt.Println("Please fill in the required information.")
 	fmt.Print("voter's name:")
 	fmt.Scan(&name)
-	find := false
-	for i, vo := range voting.RVoter {
-		if vo.Name == name {
-			voting.RVoter = append(voting.RVoter[:i], voting.RVoter[i+1:]...)
-			find = true
-			break
-		}
-	}
-	if find == false {
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var vo voting.RegisteredVoter
+	err := voting.RVoter_coll.FindOneAndDelete(ctx, bson.D{{"name", name}}).Decode(&vo)
+	if err != nil {
 		fmt.Println("No voter with the name exists on the server")
 		return 1, nil
 	}
-	for _, vo := range voting.RVoter {
-		fmt.Println(vo)
-	}
+
+	fmt.Println("delete the voter: ", vo)
 	return 0, nil
 }
 
@@ -113,6 +159,29 @@ func help() {
 }
 
 func main() {
+	uri := "mongodb://mongo1:27017,mongo2:27017"
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	db_client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+	if err != nil {
+		panic(err)
+	}
+	defer func() {
+		if err := db_client.Disconnect(ctx); err != nil {
+			panic(err)
+		}
+	}()
+	err = db_client.Ping(context.Background(), nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("Connected to MongoDB")
+
+	voting.RVoter_coll = db_client.Database("voting").Collection("RVoter")
+	voting.WVoter_coll = db_client.Database("voting").Collection("WVoter")
+	voting.RElection_coll = db_client.Database("voting").Collection("RElection")
+
 	var ip string
 	fmt.Println("Which IP do you want to listen on?")
 	fmt.Scan(&ip)
